@@ -66,9 +66,11 @@ type Consortium struct {
 // Consensus indicates the orderer types and how many broker and zookeeper
 // instances.
 type Consensus struct {
-	Type       string `yaml:"type,omitempty"`
-	Brokers    int    `yaml:"brokers,omitempty"`
-	ZooKeepers int    `yaml:"zookeepers,omitempty"`
+	Type                        string `yaml:"type,omitempty"`
+	BootstrapMethod             string `yaml:"bootstrap_method,omitempty"`
+	Brokers                     int    `yaml:"brokers,omitempty"`
+	ZooKeepers                  int    `yaml:"zookeepers,omitempty"`
+	ChannelParticipationEnabled bool   `yaml:"channel_participation_enabled,omitempty"`
 }
 
 // The SystemChannel declares the name of the network system channel and its
@@ -100,6 +102,7 @@ func (o Orderer) ID() string {
 // channels that the peer should be joined to.
 type Peer struct {
 	Name         string         `yaml:"name,omitempty"`
+	DevMode      bool           `yaml:"devmode,omitempty"`
 	Organization string         `yaml:"organization,omitempty"`
 	Channels     []*PeerChannel `yaml:"channels,omitempty"`
 }
@@ -149,6 +152,7 @@ type Network struct {
 	MetricsProvider       string
 	StatsdEndpoint        string
 	ClientAuthRequired    bool
+	TLSEnabled            bool
 
 	PortsByBrokerID  map[string]Ports
 	PortsByOrdererID map[string]Ports
@@ -193,6 +197,7 @@ func New(c *Config, rootDir string, client *docker.Client, startPort int, compon
 		Profiles:      c.Profiles,
 		Consortiums:   c.Consortiums,
 		Templates:     c.Templates,
+		TLSEnabled:    true, // Set TLS enabled as true for default
 
 		sessLastExecuted: make(map[string]time.Time),
 	}
@@ -202,7 +207,7 @@ func New(c *Config, rootDir string, client *docker.Client, startPort int, compon
 	network.ExternalBuilders = []fabricconfig.ExternalBuilder{{
 		Path:                 filepath.Join(cwd, "..", "externalbuilders", "binary"),
 		Name:                 "binary",
-		EnvironmentWhitelist: []string{"GOPROXY"},
+		PropagateEnvironment: []string{"GOPROXY"},
 	}}
 
 	if network.Templates == nil {
@@ -412,6 +417,28 @@ func (n *Network) userCryptoDir(org *Organization, nodeOrganizationType, user, c
 	)
 }
 
+// PeerOrgCADir returns the path to the folder containing the CA certificate(s) and/or
+// keys for the specified peer organization.
+func (n *Network) PeerOrgCADir(o *Organization) string {
+	return filepath.Join(
+		n.CryptoPath(),
+		"peerOrganizations",
+		o.Domain,
+		"ca",
+	)
+}
+
+// OrdererOrgCADir returns the path to the folder containing the CA certificate(s) and/or
+// keys for the specified orderer organization.
+func (n *Network) OrdererOrgCADir(o *Organization) string {
+	return filepath.Join(
+		n.CryptoPath(),
+		"ordererOrganizations",
+		o.Domain,
+		"ca",
+	)
+}
+
 // PeerUserMSPDir returns the path to the MSP directory containing the
 // certificates and keys for the specified user of the peer.
 func (n *Network) PeerUserMSPDir(p *Peer, user string) string {
@@ -449,6 +476,19 @@ func (n *Network) PeerUserCert(p *Peer, user string) string {
 	)
 }
 
+// PeerCACert returns the path to the CA certificate for the peer
+// organization.
+func (n *Network) PeerCACert(p *Peer) string {
+	org := n.Organization(p.Organization)
+	Expect(org).NotTo(BeNil())
+
+	return filepath.Join(
+		n.PeerOrgMSPDir(org),
+		"cacerts",
+		fmt.Sprintf("ca.%s-cert.pem", org.Domain),
+	)
+}
+
 // OrdererUserCert returns the path to the certificate for the specified user in
 // the orderer organization.
 func (n *Network) OrdererUserCert(o *Orderer, user string) string {
@@ -459,6 +499,19 @@ func (n *Network) OrdererUserCert(o *Orderer, user string) string {
 		n.OrdererUserMSPDir(o, user),
 		"signcerts",
 		fmt.Sprintf("%s@%s-cert.pem", user, org.Domain),
+	)
+}
+
+// OrdererCACert returns the path to the CA certificate for the orderer
+// organization.
+func (n *Network) OrdererCACert(o *Orderer) string {
+	org := n.Organization(o.Organization)
+	Expect(org).NotTo(BeNil())
+
+	return filepath.Join(
+		n.OrdererOrgMSPDir(org),
+		"cacerts",
+		fmt.Sprintf("ca.%s-cert.pem", org.Domain),
 	)
 }
 
@@ -664,7 +717,7 @@ func (n *Network) GenerateConfigTree() {
 // written to ${rootDir}/${Channel.Name}_tx.pb.
 func (n *Network) Bootstrap() {
 	if n.DockerClient != nil {
-		n.createDockerNetwork()
+		n.CreateDockerNetwork()
 	}
 
 	sess, err := n.Cryptogen(commands.Generate{
@@ -700,7 +753,7 @@ func (n *Network) Bootstrap() {
 	n.ConcatenateTLSCACertificates()
 }
 
-func (n *Network) createDockerNetwork() {
+func (n *Network) CreateDockerNetwork() {
 	_, err := n.DockerClient.CreateNetwork(
 		docker.CreateNetworkOptions{
 			Name:   n.NetworkID,
@@ -788,7 +841,6 @@ func hostIPv4Addrs() []net.IP {
 // bootstrapIdemix creates the idemix-related crypto material
 func (n *Network) bootstrapIdemix() {
 	for j, org := range n.IdemixOrgs() {
-
 		output := n.IdemixOrgMSPDir(org)
 		// - ca-keygen
 		sess, err := n.Idemixgen(commands.CAKeyGen{
@@ -799,13 +851,13 @@ func (n *Network) bootstrapIdemix() {
 
 		// - signerconfig
 		usersOutput := filepath.Join(n.IdemixOrgMSPDir(org), "users")
-		userOutput := filepath.Join(usersOutput, fmt.Sprintf("User%d@%s", 1, org.Domain))
+		userOutput := filepath.Join(usersOutput, "User1@"+org.Domain)
 		sess, err = n.Idemixgen(commands.SignerConfig{
 			CAInput:          output,
 			Output:           userOutput,
 			OrgUnit:          org.Domain,
-			EnrollmentID:     "User" + string(1),
-			RevocationHandle: fmt.Sprintf("1%d%d", 1, j),
+			EnrollmentID:     "User1",
+			RevocationHandle: fmt.Sprintf("11%d", j),
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Eventually(sess, n.EventuallyTimeout).Should(gexec.Exit(0))
@@ -847,7 +899,7 @@ func (n *Network) listTLSCACertificates() []string {
 // Cleanup attempts to cleanup docker related artifacts that may
 // have been created by the network.
 func (n *Network) Cleanup() {
-	if n.DockerClient == nil {
+	if n == nil || n.DockerClient == nil {
 		return
 	}
 
@@ -1063,6 +1115,31 @@ func (n *Network) JoinChannel(name string, o *Orderer, peers ...*Peer) {
 	}
 }
 
+func (n *Network) JoinChannelBySnapshot(snapshotDir string, peers ...*Peer) {
+	if len(peers) == 0 {
+		return
+	}
+
+	for _, p := range peers {
+		sess, err := n.PeerAdminSession(p, commands.ChannelJoinBySnapshot{
+			SnapshotPath: snapshotDir,
+			ClientAuth:   n.ClientAuthRequired,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(sess, n.EventuallyTimeout).Should(gexec.Exit(0))
+	}
+}
+
+func (n *Network) JoinBySnapshotStatus(p *Peer) []byte {
+	sess, err := n.PeerAdminSession(p, commands.ChannelJoinBySnapshotStatus{
+		ClientAuth: n.ClientAuthRequired,
+	})
+	Expect(err).NotTo(HaveOccurred())
+	Eventually(sess, n.EventuallyTimeout).Should(gexec.Exit(0))
+	return sess.Out.Contents()
+
+}
+
 // Cryptogen starts a gexec.Session for the provided cryptogen command.
 func (n *Network) Cryptogen(command Command) (*gexec.Session, error) {
 	cmd := NewCommand(n.Components.Cryptogen(), command)
@@ -1171,10 +1248,11 @@ func (n *Network) BrokerGroupRunner() ifrit.Runner {
 
 // OrdererRunner returns an ifrit.Runner for the specified orderer. The runner
 // can be used to start and manage an orderer process.
-func (n *Network) OrdererRunner(o *Orderer) *ginkgomon.Runner {
+func (n *Network) OrdererRunner(o *Orderer, env ...string) *ginkgomon.Runner {
 	cmd := exec.Command(n.Components.Orderer())
 	cmd.Env = os.Environ()
 	cmd.Env = append(cmd.Env, fmt.Sprintf("FABRIC_CFG_PATH=%s", n.OrdererDir(o)))
+	cmd.Env = append(cmd.Env, env...)
 
 	config := ginkgomon.Config{
 		AnsiColorCode:     n.nextColor(),
@@ -1207,9 +1285,11 @@ func (n *Network) OrdererGroupRunner() ifrit.Runner {
 // used to start and manage a peer process.
 func (n *Network) PeerRunner(p *Peer, env ...string) *ginkgomon.Runner {
 	cmd := n.peerCommand(
-		commands.NodeStart{PeerID: p.ID()},
+		commands.NodeStart{PeerID: p.ID(), DevMode: p.DevMode},
 		"",
 		fmt.Sprintf("FABRIC_CFG_PATH=%s", n.PeerDir(p)),
+		fmt.Sprintf("CORE_LEDGER_STATE_COUCHDBCONFIG_USERNAME=admin"),
+		fmt.Sprintf("CORE_LEDGER_STATE_COUCHDBCONFIG_PASSWORD=adminpw"),
 	)
 	cmd.Env = append(cmd.Env, env...)
 
@@ -1246,12 +1326,13 @@ func (n *Network) NetworkGroupRunner() ifrit.Runner {
 func (n *Network) peerCommand(command Command, tlsDir string, env ...string) *exec.Cmd {
 	cmd := NewCommand(n.Components.Peer(), command)
 	cmd.Env = append(cmd.Env, env...)
-	if ConnectsToOrderer(command) {
+
+	if connectsToOrderer(command) && n.TLSEnabled {
 		cmd.Args = append(cmd.Args, "--tls")
 		cmd.Args = append(cmd.Args, "--cafile", n.CACertsBundlePath())
 	}
 
-	if ClientAuthEnabled(command) {
+	if clientAuthEnabled(command) {
 		certfilePath := filepath.Join(tlsDir, "client.crt")
 		keyfilePath := filepath.Join(tlsDir, "client.key")
 
@@ -1268,7 +1349,32 @@ func (n *Network) peerCommand(command Command, tlsDir string, env ...string) *ex
 		cmd.Args = append(cmd.Args, "--tlsRootCertFiles")
 		cmd.Args = append(cmd.Args, n.CACertsBundlePath())
 	}
+
+	// If there is --peerAddress, add --tlsRootCertFile parameter
+	requiredPeerAddress := flagCount("--peerAddress", cmd.Args)
+	if requiredPeerAddress > 0 {
+		cmd.Args = append(cmd.Args, "--tlsRootCertFile")
+		cmd.Args = append(cmd.Args, n.CACertsBundlePath())
+	}
 	return cmd
+}
+
+func connectsToOrderer(c Command) bool {
+	for _, arg := range c.Args() {
+		if arg == "--orderer" {
+			return true
+		}
+	}
+	return false
+}
+
+func clientAuthEnabled(c Command) bool {
+	for _, arg := range c.Args() {
+		if arg == "--clientauth" {
+			return true
+		}
+	}
+	return false
 }
 
 func flagCount(flag string, args []string) int {
@@ -1563,6 +1669,7 @@ const (
 	ProfilePort    PortName = "Profile"
 	OperationsPort PortName = "Operations"
 	ClusterPort    PortName = "Cluster"
+	AdminPort      PortName = "Admin"
 )
 
 // PeerPortNames returns the list of ports that need to be reserved for a Peer.
@@ -1573,7 +1680,7 @@ func PeerPortNames() []PortName {
 // OrdererPortNames  returns the list of ports that need to be reserved for an
 // Orderer.
 func OrdererPortNames() []PortName {
-	return []PortName{ListenPort, ProfilePort, OperationsPort, ClusterPort}
+	return []PortName{ListenPort, ProfilePort, OperationsPort, ClusterPort, AdminPort}
 }
 
 // BrokerPortNames returns the list of ports that need to be reserved for a

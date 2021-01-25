@@ -150,8 +150,8 @@ func NewBccspMspWithKeyStore(version MSPVersion, keyStore bccsp.KeyStore, bccsp 
 	}
 
 	csp, err := sw.NewWithParams(
-		factory.GetDefaultOpts().SwOpts.SecLevel,
-		factory.GetDefaultOpts().SwOpts.HashFamily,
+		factory.GetDefaultOpts().SW.Security,
+		factory.GetDefaultOpts().SW.Hash,
 		keyStore)
 	if err != nil {
 		return nil, err
@@ -300,13 +300,6 @@ func (msp *bccspmsp) GetDefaultSigningIdentity() (SigningIdentity, error) {
 	}
 
 	return msp.signer, nil
-}
-
-// GetSigningIdentity returns a specific signing
-// identity identified by the supplied identifier
-func (msp *bccspmsp) GetSigningIdentity(identifier *IdentityIdentifier) (SigningIdentity, error) {
-	// TODO
-	return nil, errors.Errorf("no signing identity for %#v", identifier)
 }
 
 // Validate attempts to determine whether
@@ -845,6 +838,10 @@ func (msp *bccspmsp) IsWellFormed(identity *m.SerializedIdentity) error {
 	cert, err := x509.ParseCertificate(bl.Bytes)
 	if err != nil {
 		return err
+	}
+
+	if !isECDSASignedCert(cert) {
+		return nil
 	}
 
 	return isIdentitySignedInCanonicalForm(cert.Signature, identity.Mspid, identity.IdBytes)

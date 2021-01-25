@@ -13,9 +13,8 @@ Hyperledger Fabric.
           Please visit the :doc:`prereqs` if you haven't previously installed
           it.
 
-          If you are using Docker Toolbox on Windows 7 or macOS, you
-          will need to use a location under ``C:\Users`` (Windows 7) or
-          ``/Users`` (macOS) when installing and running the samples.
+          If you are using Docker Toolbox or macOS, you
+          will need to use a location under ``/Users`` (macOS) when installing and running the samples.
 
           If you are using Docker for Mac, you will need to use a location
           under ``/Users``, ``/Volumes``, ``/private``, or ``/tmp``.  To use a different
@@ -46,15 +45,14 @@ the binaries and images.
 
   curl -sSL https://bit.ly/2ysbOFE | bash -s
 
-.. note:: If you want a specific release, pass a version identifier for Fabric,
-          Fabric-ca and thirdparty Docker images.
+.. note:: If you want a specific release, pass a version identifier for Fabric and Fabric-CA docker images.
           The command below demonstrates how to download the latest production releases -
-          **Fabric v2.1.0** and **Fabric CA v1.4.7**
+          **Fabric v2.3.0** and **Fabric CA v1.4.9**
 
 .. code:: bash
 
-  curl -sSL https://bit.ly/2ysbOFE | bash -s -- <fabric_version> <fabric-ca_version> <thirdparty_version>
-  curl -sSL https://bit.ly/2ysbOFE | bash -s -- 2.1.0 1.4.7 0.4.20
+  curl -sSL https://bit.ly/2ysbOFE | bash -s -- <fabric_version> <fabric-ca_version>
+  curl -sSL https://bit.ly/2ysbOFE | bash -s -- 2.3.0 1.4.9
 
 .. note:: If you get an error running the above curl command, you may
           have too old a version of curl that does not handle
@@ -65,6 +63,10 @@ the binaries and images.
 	  get the right environment. Alternately, you can substitute
 	  the un-shortened URL:
 	  https://raw.githubusercontent.com/hyperledger/fabric/{BRANCH}/scripts/bootstrap.sh
+
+.. note:: For additional use pattern you can use the -h flag to view the help and available commands for the
+          Fabric-Samples bootstrap script. For example:
+          ``curl -sSL https://bit.ly/2ysbOFE | bash -s -- -h``
 
 The command above downloads and executes a bash script
 that will download and extract all of the platform-specific binaries you
@@ -78,7 +80,8 @@ created above. It retrieves the following platform-specific binaries:
   * ``idemixgen``
   * ``orderer``,
   * ``peer``,
-  * ``fabric-ca-client``
+  * ``fabric-ca-client``,
+  * ``fabric-ca-server``
 
 and places them in the ``bin`` sub-directory of the current working
 directory.

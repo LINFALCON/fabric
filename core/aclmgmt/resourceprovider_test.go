@@ -16,9 +16,10 @@ import (
 	"github.com/hyperledger/fabric-protos-go/peer"
 	"github.com/hyperledger/fabric/core/aclmgmt/mocks"
 	"github.com/hyperledger/fabric/internal/pkg/identity"
+	"github.com/hyperledger/fabric/msp/mgmt"
 	msptesttools "github.com/hyperledger/fabric/msp/mgmt/testtools"
 	"github.com/hyperledger/fabric/protoutil"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func newPolicyProvider(pEvaluator policyEvaluator) aclmgmtPolicyProvider {
@@ -60,13 +61,13 @@ func TestPolicyBase(t *testing.T) {
 	pprov := newPolicyProvider(peval)
 	sProp, _ := protoutil.MockSignedEndorserProposalOrPanic("A", &peer.ChaincodeSpec{}, []byte("Alice"), []byte("msg1"))
 	err := pprov.CheckACL("pol", sProp)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	signer := &mocks.SignerSerializer{}
 	env, err := protoutil.CreateSignedEnvelope(common.HeaderType_CONFIG, "myc", signer, &common.ConfigEnvelope{}, 0, 0)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	err = pprov.CheckACL("pol", env)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 }
 
 func TestPolicyBad(t *testing.T) {
@@ -75,16 +76,16 @@ func TestPolicyBad(t *testing.T) {
 
 	//bad policy
 	err := pprov.CheckACL("pol", []byte("not a signed proposal"))
-	assert.Error(t, err, InvalidIdInfo("pol").Error())
+	require.Error(t, err, InvalidIdInfo("pol").Error())
 
 	sProp, _ := protoutil.MockSignedEndorserProposalOrPanic("A", &peer.ChaincodeSpec{}, []byte("Alice"), []byte("msg1"))
 	err = pprov.CheckACL("badpolicy", sProp)
-	assert.Error(t, err)
+	require.Error(t, err)
 
 	sProp, _ = protoutil.MockSignedEndorserProposalOrPanic("A", &peer.ChaincodeSpec{}, []byte("Alice"), []byte("msg1"))
 	sProp.ProposalBytes = []byte("bad proposal bytes")
 	err = pprov.CheckACL("res", sProp)
-	assert.Error(t, err)
+	require.Error(t, err)
 
 	sProp, _ = protoutil.MockSignedEndorserProposalOrPanic("A", &peer.ChaincodeSpec{}, []byte("Alice"), []byte("msg1"))
 	prop := &peer.Proposal{}
@@ -94,7 +95,7 @@ func TestPolicyBad(t *testing.T) {
 	prop.Header = []byte("bad hdr")
 	sProp.ProposalBytes = protoutil.MarshalOrPanic(prop)
 	err = pprov.CheckACL("res", sProp)
-	assert.Error(t, err)
+	require.Error(t, err)
 }
 
 // test to ensure ptypes are processed by default provider
@@ -104,7 +105,30 @@ func TestForceDefaultsForPType(t *testing.T) {
 	defAclProvider.IsPtypePolicyReturns(true)
 	rp := &resourceProvider{defaultProvider: defAclProvider}
 	err := rp.CheckACL("aptype", "somechannel", struct{}{})
-	assert.NoError(t, err)
+	require.NoError(t, err)
+}
+
+func TestCheckACLNoChannel(t *testing.T) {
+	// use mocked objects to test good path
+	mockDefAclProvider := &mocks.DefaultACLProvider{}
+	mockDefAclProvider.CheckACLNoChannelReturns(nil)
+	mockDefAclProvider.IsPtypePolicyReturns(true)
+	rp := &resourceProvider{defaultProvider: mockDefAclProvider}
+	err := rp.CheckACLNoChannel("aptype", struct{}{})
+	require.NoError(t, err)
+
+	// error paths
+	defAclProvider := &defaultACLProviderImpl{
+		pResourcePolicyMap: map[string]string{"aptype": mgmt.Admins},
+	}
+	rp = &resourceProvider{defaultProvider: defAclProvider}
+	err = rp.CheckACLNoChannel("nontype", struct{}{})
+	require.Error(t, err, "cannot override peer type policy for channeless ACL check")
+
+	rp = &resourceProvider{defaultProvider: defAclProvider}
+	err = rp.CheckACLNoChannel("aptype", struct{}{})
+	require.EqualError(t, err, "Unknown id on channelless checkACL aptype")
+
 }
 
 func init() {

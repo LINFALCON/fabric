@@ -12,7 +12,7 @@ General:
   ListenAddress: 127.0.0.1
   ListenPort: {{ .OrdererPort Orderer "Listen" }}
   TLS:
-    Enabled: true
+    Enabled: {{ .TLSEnabled }}
     PrivateKey: {{ $w.OrdererLocalTLSDir Orderer }}/server.key
     Certificate: {{ $w.OrdererLocalTLSDir Orderer }}/server.crt
     RootCAs:
@@ -35,7 +35,7 @@ General:
     ServerMinInterval: 60s
     ServerInterval: 7200s
     ServerTimeout: 20s
-  BootstrapMethod: file
+  BootstrapMethod: {{ .Consensus.BootstrapMethod }}
   BootstrapFile: {{ .RootDir }}/{{ .SystemChannel.Name }}_block.pb
   LocalMSPDir: {{ $w.OrdererLocalMSPDir Orderer }}
   LocalMSPID: {{ ($w.Organization Orderer.Organization).MSPID }}
@@ -53,7 +53,6 @@ General:
     TimeWindow: 15m
 FileLedger:
   Location: {{ .OrdererDir Orderer }}/system
-  Prefix: hyperledger-fabric-ordererledger
 {{ if eq .Consensus.Type "kafka" -}}
 Kafka:
   Retry:
@@ -92,11 +91,11 @@ Debug:
 Consensus:
   WALDir: {{ .OrdererDir Orderer }}/etcdraft/wal
   SnapDir: {{ .OrdererDir Orderer }}/etcdraft/snapshot
-  EvictionSuspicion: 10s
+  EvictionSuspicion: 5s
 Operations:
   ListenAddress: 127.0.0.1:{{ .OrdererPort Orderer "Operations" }}
   TLS:
-    Enabled: true
+    Enabled: {{ .TLSEnabled }}
     PrivateKey: {{ $w.OrdererLocalTLSDir Orderer }}/server.key
     Certificate: {{ $w.OrdererLocalTLSDir Orderer }}/server.crt
     RootCAs:
@@ -107,9 +106,28 @@ Operations:
 Metrics:
   Provider: {{ .MetricsProvider }}
   Statsd:
+    {{- if .StatsdEndpoint }}
+    Network: tcp
+    Address: {{ .StatsdEndpoint }}
+    {{- else }}
     Network: udp
-    Address: {{ if .StatsdEndpoint }}{{ .StatsdEndpoint }}{{ else }}127.0.0.1:8125{{ end }}
+    Address: 127.0.0.1:8125
+    {{- end }}
     WriteInterval: 5s
     Prefix: {{ ReplaceAll (ToLower Orderer.ID) "." "_" }}
+Admin:
+  ListenAddress: 127.0.0.1:{{ .OrdererPort Orderer "Admin" }}
+  TLS:
+    Enabled: {{ .TLSEnabled }}
+    PrivateKey: {{ $w.OrdererLocalTLSDir Orderer }}/server.key
+    Certificate: {{ $w.OrdererLocalTLSDir Orderer }}/server.crt
+    RootCAs:
+    -  {{ $w.OrdererLocalTLSDir Orderer }}/ca.crt
+    ClientAuthRequired: true
+    ClientRootCAs:
+    -  {{ $w.OrdererLocalTLSDir Orderer }}/ca.crt
 {{- end }}
+ChannelParticipation:
+  Enabled: {{ .Consensus.ChannelParticipationEnabled }}
+  MaxRequestBodySize: 1 MB
 `

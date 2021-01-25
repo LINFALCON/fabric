@@ -7,29 +7,36 @@ SPDX-License-Identifier: Apache-2.0
 package history
 
 import (
+	"crypto/sha256"
 	"io/ioutil"
 	"os"
 	"testing"
 
-	"github.com/hyperledger/fabric/bccsp/sw"
 	"github.com/hyperledger/fabric/common/ledger/blkstorage"
 	"github.com/hyperledger/fabric/common/metrics/disabled"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/bookkeeping"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/privacyenabledstate"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/txmgr"
-	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/txmgr/lockbasedtxmgr"
 	"github.com/hyperledger/fabric/core/ledger/mock"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-/////// levelDBLockBasedHistoryEnv //////
+var (
+	testHashFunc = func(data []byte) ([]byte, error) {
+		h := sha256.New()
+		if _, err := h.Write(data); err != nil {
+			return nil, err
+		}
+		return h.Sum(nil), nil
+	}
+)
 
 type levelDBLockBasedHistoryEnv struct {
 	t                     testing.TB
 	testBlockStorageEnv   *testBlockStoreEnv
 	testDBEnv             privacyenabledstate.TestEnv
 	testBookkeepingEnv    *bookkeeping.TestEnv
-	txmgr                 txmgr.TxMgr
+	txmgr                 *txmgr.LockBasedTxMgr
 	testHistoryDBProvider *DBProvider
 	testHistoryDB         *DB
 	testHistoryDBPath     string
@@ -50,9 +57,7 @@ func newTestHistoryEnv(t *testing.T) *levelDBLockBasedHistoryEnv {
 		t.Fatalf("Failed to create history database directory: %s", err)
 	}
 
-	cryptoProvider, err := sw.NewDefaultSecurityLevelWithKeystore(sw.NewDummyKeyStore())
-	assert.NoError(t, err)
-	txmgrInitializer := &lockbasedtxmgr.Initializer{
+	txmgrInitializer := &txmgr.Initializer{
 		LedgerID:            testLedgerID,
 		DB:                  testDB,
 		StateListeners:      nil,
@@ -60,15 +65,14 @@ func newTestHistoryEnv(t *testing.T) *levelDBLockBasedHistoryEnv {
 		BookkeepingProvider: testBookkeepingEnv.TestProvider,
 		CCInfoProvider:      &mock.DeployedChaincodeInfoProvider{},
 		CustomTxProcessors:  nil,
-		Hasher:              cryptoProvider,
+		HashFunc:            testHashFunc,
 	}
-	txMgr, err := lockbasedtxmgr.NewLockBasedTxMgr(txmgrInitializer)
+	txMgr, err := txmgr.NewLockBasedTxMgr(txmgrInitializer)
 
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	testHistoryDBProvider, err := NewDBProvider(testHistoryDBPath)
-	assert.NoError(t, err)
-	testHistoryDB, err := testHistoryDBProvider.GetDBHandle("TestHistoryDB")
-	assert.NoError(t, err)
+	require.NoError(t, err)
+	testHistoryDB := testHistoryDBProvider.GetDBHandle("TestHistoryDB")
 
 	return &levelDBLockBasedHistoryEnv{
 		t,
@@ -117,7 +121,7 @@ func newBlockStorageTestEnv(t testing.TB) *testBlockStoreEnv {
 	indexConfig := &blkstorage.IndexConfig{AttrsToIndex: attrsToIndex}
 
 	p, err := blkstorage.NewProvider(conf, indexConfig, &disabled.Provider{})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	return &testBlockStoreEnv{t, p, testPath}
 }
 

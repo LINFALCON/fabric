@@ -35,6 +35,7 @@ import (
 	"github.com/hyperledger/fabric/common/metrics/disabled"
 	"github.com/hyperledger/fabric/common/policies"
 	"github.com/hyperledger/fabric/common/util"
+	aclmocks "github.com/hyperledger/fabric/core/aclmgmt/mocks"
 	"github.com/hyperledger/fabric/core/aclmgmt/resources"
 	"github.com/hyperledger/fabric/core/chaincode/accesscontrol"
 	"github.com/hyperledger/fabric/core/chaincode/lifecycle"
@@ -62,7 +63,7 @@ import (
 	msptesttools "github.com/hyperledger/fabric/msp/mgmt/testtools"
 	"github.com/hyperledger/fabric/protoutil"
 	"github.com/spf13/viper"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // CCContext is a legacy structure that was utilized heavily in the tests
@@ -218,7 +219,7 @@ func initMockPeer(channelIDs ...string) (*peer.Peer, *ChaincodeSupport, func(), 
 			GetMSPIDs: peerInstance.GetMSPIDs,
 		},
 		SCCProvider:      &lscc.PeerShim{Peer: peerInstance},
-		ACLProvider:      mockAclProvider,
+		ACLProvider:      &aclmocks.DefaultACLProvider{},
 		GetMSPIDs:        peerInstance.GetMSPIDs,
 		PolicyChecker:    newPolicyChecker(peerInstance),
 		BCCSP:            cryptoProvider,
@@ -455,10 +456,10 @@ func deployCC(t *testing.T, txParams *ccprovider.TransactionParams, ccContext *C
 	cds := &pb.ChaincodeDeploymentSpec{ChaincodeSpec: spec, CodePackage: code}
 
 	cryptoProvider, err := sw.NewDefaultSecurityLevelWithKeystore(sw.NewDummyKeyStore())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	ccinfoFSImpl := &ccprovider.CCInfoFSImpl{GetHasher: cryptoProvider}
 	_, err = ccinfoFSImpl.PutChaincode(cds)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	b := protoutil.MarshalOrPanic(cds)
 
@@ -983,13 +984,13 @@ func TestStartAndWaitLaunchError(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error but succeeded")
 	}
-	assert.EqualError(t, err, "error starting container: Bad lunch; upset stomach")
+	require.EqualError(t, err, "error starting container: Bad lunch; upset stomach")
 }
 
 func TestGetTxContextFromHandler(t *testing.T) {
 	chnl := "test"
 	peerInstance, _, cleanup, err := initMockPeer(chnl)
-	assert.NoError(t, err, "failed to initialize mock peer")
+	require.NoError(t, err, "failed to initialize mock peer")
 	defer cleanup()
 
 	h := Handler{
@@ -1000,7 +1001,7 @@ func TestGetTxContextFromHandler(t *testing.T) {
 	txid := "1"
 	// test getTxContext for TEST channel, tx=1, msgType=IVNOKE_CHAINCODE and empty payload - empty payload => expect to return empty txContext
 	txContext, _ := h.getTxContextForInvoke(chnl, "1", []byte(""), "[%s]No ledger context for %s. Sending %s", 12345, "TestCC", pb.ChaincodeMessage_ERROR)
-	assert.Nil(t, txContext, "expected empty txContext for empty payload")
+	require.Nil(t, txContext, "expected empty txContext for empty payload")
 
 	pldgr := peerInstance.GetLedger(chnl)
 
@@ -1216,7 +1217,7 @@ func TestCCFramework(t *testing.T) {
 
 func TestExecuteTimeout(t *testing.T) {
 	_, cs, cleanup, err := initMockPeer("testchannel")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	defer cleanup()
 
 	tests := []struct {
@@ -1283,7 +1284,7 @@ func TestExecuteTimeout(t *testing.T) {
 			input := &pb.ChaincodeInput{Args: util.ToChaincodeArgs(tt.command)}
 
 			result := cs.executeTimeout(tt.namespace, input)
-			assert.Equalf(t, tt.expectedTimeout, result, "want %s, got %s", tt.expectedTimeout, result)
+			require.Equalf(t, tt.expectedTimeout, result, "want %s, got %s", tt.expectedTimeout, result)
 		})
 	}
 }
@@ -1308,7 +1309,7 @@ func TestMaxDuration(t *testing.T) {
 	}
 	for _, tt := range tests {
 		result := maxDuration(tt.durations...)
-		assert.Equalf(t, tt.expected, result, "want %s got %s", tt.expected, result)
+		require.Equalf(t, tt.expected, result, "want %s got %s", tt.expected, result)
 	}
 }
 

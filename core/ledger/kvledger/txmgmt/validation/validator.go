@@ -9,7 +9,6 @@ package validation
 import (
 	"github.com/hyperledger/fabric-protos-go/ledger/rwset/kvrwset"
 	"github.com/hyperledger/fabric-protos-go/peer"
-	"github.com/hyperledger/fabric/core/ledger"
 	"github.com/hyperledger/fabric/core/ledger/internal/version"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/privacyenabledstate"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwsetutil"
@@ -19,8 +18,8 @@ import (
 // validator validates a tx against the latest committed state
 // and preceding valid transactions with in the same block
 type validator struct {
-	db     *privacyenabledstate.DB
-	hasher ledger.Hasher
+	db       *privacyenabledstate.DB
+	hashFunc rwsetutil.HashFunc
 }
 
 // preLoadCommittedVersionOfRSet loads committed version of all keys in each
@@ -103,7 +102,9 @@ func (v *validator) validateAndPrepareBatch(blk *block, doMVCCValidation bool) (
 		if validationCode == peer.TxValidationCode_VALID {
 			logger.Debugf("Block [%d] Transaction index [%d] TxId [%s] marked as valid by state validator. ContainsPostOrderWrites [%t]", blk.num, tx.indexInBlock, tx.id, tx.containsPostOrderWrites)
 			committingTxHeight := version.NewHeight(blk.num, uint64(tx.indexInBlock))
-			updates.applyWriteSet(tx.rwset, committingTxHeight, v.db, tx.containsPostOrderWrites)
+			if err := updates.applyWriteSet(tx.rwset, committingTxHeight, v.db, tx.containsPostOrderWrites); err != nil {
+				return nil, err
+			}
 		} else {
 			logger.Warningf("Block [%d] Transaction index [%d] TxId [%s] marked as invalid by state validator. Reason code [%s]",
 				blk.num, tx.indexInBlock, tx.id, validationCode.String())
@@ -224,12 +225,14 @@ func (v *validator) validateRangeQuery(ns string, rangeQueryInfo *kvrwset.RangeQ
 	var qv rangeQueryValidator
 	if rangeQueryInfo.GetReadsMerkleHashes() != nil {
 		logger.Debug(`Hashing results are present in the range query info hence, initiating hashing based validation`)
-		qv = &rangeQueryHashValidator{hasher: v.hasher}
+		qv = &rangeQueryHashValidator{hashFunc: v.hashFunc}
 	} else {
 		logger.Debug(`Hashing results are not present in the range query info hence, initiating raw KVReads based validation`)
 		qv = &rangeQueryResultsValidator{}
 	}
-	qv.init(rangeQueryInfo, combinedItr)
+	if err := qv.init(rangeQueryInfo, combinedItr); err != nil {
+		return false, err
+	}
 	return qv.validate()
 }
 

@@ -49,8 +49,8 @@ import (
 	"github.com/hyperledger/fabric/msp/mgmt"
 	msptesttools "github.com/hyperledger/fabric/msp/mgmt/testtools"
 	"github.com/hyperledger/fabric/protoutil"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 func signedByAnyMember(ids []string) []byte {
@@ -120,16 +120,16 @@ func setupLedgerAndValidatorWithCapabilities(t *testing.T, c *tmocks.Application
 func setupLedgerAndValidatorExplicitWithMSP(t *testing.T, cpb *tmocks.ApplicationCapabilities, plugin validation.Plugin, mspMgr msp.MSPManager) (ledger.PeerLedger, txvalidator.Validator, func()) {
 	ledgerMgr, cleanup := constructLedgerMgrWithTestDefaults(t, "txvalidator")
 	gb, err := ctxt.MakeGenesisBlock("TestLedger")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	theLedger, err := ledgerMgr.CreateLedger("TestLedger", gb)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	pm := &mocks.Mapper{}
 	factory := &mocks.PluginFactory{}
 	pm.On("FactoryByName", vp.Name("vscc")).Return(factory)
 	factory.On("New").Return(plugin)
 
 	cryptoProvider, err := sw.NewDefaultSecurityLevelWithKeystore(sw.NewDummyKeyStore())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	theValidator := txvalidatorv14.NewTxValidator(
 		"",
 		semaphore.New(10),
@@ -152,8 +152,9 @@ func createRWset(t *testing.T, ccnames ...string) []byte {
 		rwsetBuilder.AddToWriteSet(ccname, "key", []byte("value"))
 	}
 	rwset, err := rwsetBuilder.GetTxSimulationResults()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	rwsetBytes, err := rwset.GetPubSimulationBytes()
+	require.NoError(t, err)
 	return rwsetBytes
 }
 
@@ -173,17 +174,17 @@ const ccVersion = "1.0"
 func getEnvWithType(ccID string, event []byte, res []byte, pType common.HeaderType, t *testing.T) *common.Envelope {
 	// get a toy proposal
 	prop, err := getProposalWithType(ccID, pType)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	response := &peer.Response{Status: 200}
 
 	// endorse it to get a proposal response
 	presp, err := protoutil.CreateProposalResponse(prop.Header, prop.Payload, response, res, event, &peer.ChaincodeID{Name: ccID, Version: ccVersion}, signer)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// assemble a transaction from that proposal and endorsement
 	tx, err := protoutil.CreateSignedTx(prop, signer, presp)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	return tx
 }
@@ -204,19 +205,19 @@ func getEnvWithSigner(ccID string, event []byte, res []byte, sig msp.SigningIden
 	}
 
 	sID, err := sig.Serialize()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	prop, _, err := protoutil.CreateProposalFromCIS(pType, "foochain", cis, sID)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	response := &peer.Response{Status: 200}
 
 	// endorse it to get a proposal response
 	presp, err := protoutil.CreateProposalResponse(prop.Header, prop.Payload, response, res, event, &peer.ChaincodeID{Name: ccID, Version: ccVersion}, sig)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// assemble a transaction from that proposal and endorsement
 	tx, err := protoutil.CreateSignedTx(prop, sig, presp)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	return tx
 }
@@ -233,39 +234,39 @@ func putCCInfoWithVSCCAndVer(theLedger ledger.PeerLedger, ccname, vscc, ver stri
 
 	txid := util.GenerateUUID()
 	simulator, err := theLedger.NewTxSimulator(txid)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	simulator.SetState("lscc", ccname, cdbytes)
 	simulator.Done()
 
 	simRes, err := simulator.GetTxSimulationResults()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	pubSimulationBytes, err := simRes.GetPubSimulationBytes()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	bcInfo, err := theLedger.GetBlockchainInfo()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	block0 := testutil.ConstructBlock(t, 1, bcInfo.CurrentBlockHash, [][]byte{pubSimulationBytes}, true)
 	err = theLedger.CommitLegacy(&ledger.BlockAndPvtData{Block: block0}, &ledger.CommitOptions{})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 }
 
 func putSBEP(theLedger ledger.PeerLedger, cc, key string, policy []byte, t *testing.T) {
 	vpMetadataKey := peer.MetaDataKeys_VALIDATION_PARAMETER.String()
 	txid := util.GenerateUUID()
 	simulator, err := theLedger.NewTxSimulator(txid)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	simulator.SetStateMetadata(cc, key, map[string][]byte{vpMetadataKey: policy})
 	simulator.SetState(cc, key, []byte("I am a man who walks alone"))
 	simulator.Done()
 
 	simRes, err := simulator.GetTxSimulationResults()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	pubSimulationBytes, err := simRes.GetPubSimulationBytes()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	bcInfo, err := theLedger.GetBlockchainInfo()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	block0 := testutil.ConstructBlock(t, 2, bcInfo.CurrentBlockHash, [][]byte{pubSimulationBytes}, true)
 	err = theLedger.CommitLegacy(&ledger.BlockAndPvtData{Block: block0}, &ledger.CommitOptions{})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 }
 
 func putCCInfo(theLedger ledger.PeerLedger, ccname string, policy []byte, t *testing.T) {
@@ -274,13 +275,13 @@ func putCCInfo(theLedger ledger.PeerLedger, ccname string, policy []byte, t *tes
 
 func assertInvalid(block *common.Block, t *testing.T, code peer.TxValidationCode) {
 	txsFilter := txflags.ValidationFlags(block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
-	assert.True(t, txsFilter.IsInvalid(0))
-	assert.True(t, txsFilter.IsSetTo(0, code))
+	require.True(t, txsFilter.IsInvalid(0))
+	require.True(t, txsFilter.IsSetTo(0, code))
 }
 
 func assertValid(block *common.Block, t *testing.T) {
 	txsFilter := txflags.ValidationFlags(block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
-	assert.False(t, txsFilter.IsInvalid(0))
+	require.False(t, txsFilter.IsInvalid(0))
 }
 
 func TestInvokeBadRWSet(t *testing.T) {
@@ -306,7 +307,7 @@ func testInvokeBadRWSet(t *testing.T, l ledger.PeerLedger, v txvalidator.Validat
 	b := &common.Block{Data: &common.BlockData{Data: [][]byte{protoutil.MarshalOrPanic(tx)}}, Header: &common.BlockHeader{Number: 1}}
 
 	err := v.Validate(b)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assertInvalid(b, t, peer.TxValidationCode_BAD_RWSET)
 }
 
@@ -335,7 +336,7 @@ func testInvokeNoPolicy(t *testing.T, l ledger.PeerLedger, v txvalidator.Validat
 	b := &common.Block{Data: &common.BlockData{Data: [][]byte{protoutil.MarshalOrPanic(tx)}}, Header: &common.BlockHeader{Number: 2}}
 
 	err := v.Validate(b)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assertInvalid(b, t, peer.TxValidationCode_INVALID_OTHER_REASON)
 }
 
@@ -364,7 +365,7 @@ func testInvokeOK(t *testing.T, l ledger.PeerLedger, v txvalidator.Validator) {
 	b := &common.Block{Data: &common.BlockData{Data: [][]byte{protoutil.MarshalOrPanic(tx)}}, Header: &common.BlockHeader{Number: 2}}
 
 	err := v.Validate(b)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assertValid(b, t)
 }
 
@@ -422,7 +423,7 @@ func testInvokeNOKDuplicateNs(t *testing.T, l ledger.PeerLedger, v txvalidator.V
 	b := &common.Block{Data: &common.BlockData{Data: [][]byte{protoutil.MarshalOrPanic(tx)}}, Header: &common.BlockHeader{Number: 2}}
 
 	err := v.Validate(b)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assertInvalid(b, t, peer.TxValidationCode_ILLEGAL_WRITESET)
 }
 
@@ -445,7 +446,7 @@ func TestInvokeNoRWSet(t *testing.T) {
 		}
 
 		err := v.Validate(b)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assertValid(b, t)
 	})
 
@@ -483,7 +484,7 @@ func testInvokeNoRWSet(t *testing.T, l ledger.PeerLedger, v txvalidator.Validato
 	b := &common.Block{Data: &common.BlockData{Data: [][]byte{protoutil.MarshalOrPanic(tx)}}, Header: &common.BlockHeader{Number: 2}}
 
 	err := v.Validate(b)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assertInvalid(b, t, peer.TxValidationCode_ENDORSEMENT_POLICY_FAILURE)
 }
 
@@ -574,10 +575,6 @@ func (fake *mockMSP) GetType() msp.ProviderType {
 
 func (fake *mockMSP) GetIdentifier() (string, error) {
 	return fake.MspID, nil
-}
-
-func (fake *mockMSP) GetSigningIdentity(identifier *msp.IdentityIdentifier) (msp.SigningIdentity, error) {
-	return nil, nil
 }
 
 func (fake *mockMSP) GetDefaultSigningIdentity() (msp.SigningIdentity, error) {
@@ -715,8 +712,9 @@ func TestParallelValidation(t *testing.T) {
 			sig = sigID0
 		}
 		rwset, err := rwsetBuilder.GetTxSimulationResults()
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		rwsetBytes, err := rwset.GetPubSimulationBytes()
+		require.NoError(t, err)
 		tx := getEnvWithSigner(ccID, nil, rwsetBytes, sig, t)
 		blockData = append(blockData, protoutil.MarshalOrPanic(tx))
 	}
@@ -726,7 +724,7 @@ func TestParallelValidation(t *testing.T) {
 
 	// validate the block
 	err := v.Validate(b)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Block metadata array position to store serialized bit array filter of invalid transactions
 	txsFilter := txflags.ValidationFlags(b.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
@@ -740,9 +738,9 @@ func TestParallelValidation(t *testing.T) {
 		case 6:
 			fallthrough
 		case 9:
-			assert.True(t, txsFilter.IsInvalid(txNum))
+			require.True(t, txsFilter.IsInvalid(txNum))
 		default:
-			assert.False(t, txsFilter.IsInvalid(txNum))
+			require.False(t, txsFilter.IsInvalid(txNum))
 		}
 	}
 }
@@ -761,7 +759,7 @@ func TestChaincodeEvent(t *testing.T) {
 			b := &common.Block{Data: &common.BlockData{Data: [][]byte{protoutil.MarshalOrPanic(tx)}}, Header: &common.BlockHeader{Number: 2}}
 
 			err := v.Validate(b)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			assertValid(b, t)
 		})
 
@@ -777,7 +775,7 @@ func TestChaincodeEvent(t *testing.T) {
 			b := &common.Block{Data: &common.BlockData{Data: [][]byte{protoutil.MarshalOrPanic(tx)}}, Header: &common.BlockHeader{Number: 2}}
 
 			err := v.Validate(b)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			assertValid(b, t)
 		})
 
@@ -793,7 +791,7 @@ func TestChaincodeEvent(t *testing.T) {
 			b := &common.Block{Data: &common.BlockData{Data: [][]byte{protoutil.MarshalOrPanic(tx)}}, Header: &common.BlockHeader{Number: 2}}
 
 			err := v.Validate(b)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			assertValid(b, t)
 		})
 	})
@@ -854,7 +852,7 @@ func testCCEventMismatchedName(t *testing.T, l ledger.PeerLedger, v txvalidator.
 	b := &common.Block{Data: &common.BlockData{Data: [][]byte{protoutil.MarshalOrPanic(tx)}}, Header: &common.BlockHeader{Number: 2}}
 
 	err := v.Validate(b)
-	assert.NoError(t, err) // TODO, convert test so it can check the error text for INVALID_OTHER_REASON
+	require.NoError(t, err) // TODO, convert test so it can check the error text for INVALID_OTHER_REASON
 	assertInvalid(b, t, peer.TxValidationCode_INVALID_OTHER_REASON)
 }
 
@@ -867,7 +865,7 @@ func testCCEventBadBytes(t *testing.T, l ledger.PeerLedger, v txvalidator.Valida
 	b := &common.Block{Data: &common.BlockData{Data: [][]byte{protoutil.MarshalOrPanic(tx)}}, Header: &common.BlockHeader{Number: 2}}
 
 	err := v.Validate(b)
-	assert.NoError(t, err) // TODO, convert test so it can check the error text for INVALID_OTHER_REASON
+	require.NoError(t, err) // TODO, convert test so it can check the error text for INVALID_OTHER_REASON
 	assertInvalid(b, t, peer.TxValidationCode_INVALID_OTHER_REASON)
 }
 
@@ -880,7 +878,7 @@ func testCCEventGoodPath(t *testing.T, l ledger.PeerLedger, v txvalidator.Valida
 	b := &common.Block{Data: &common.BlockData{Data: [][]byte{protoutil.MarshalOrPanic(tx)}}, Header: &common.BlockHeader{Number: 2}}
 
 	err := v.Validate(b)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assertValid(b, t)
 }
 
@@ -914,15 +912,15 @@ func testInvokeOKPvtDataOnly(t *testing.T, l ledger.PeerLedger, v txvalidator.Va
 	rwsetBuilder := rwsetutil.NewRWSetBuilder()
 	rwsetBuilder.AddToPvtAndHashedWriteSet(ccID, "mycollection", "somekey", nil)
 	rwset, err := rwsetBuilder.GetTxSimulationResults()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	rwsetBytes, err := rwset.GetPubSimulationBytes()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	tx := getEnv(ccID, nil, rwsetBytes, t)
 	b := &common.Block{Data: &common.BlockData{Data: [][]byte{protoutil.MarshalOrPanic(tx)}}, Header: &common.BlockHeader{Number: 2}}
 
 	err = v.Validate(b)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assertInvalid(b, t, peer.TxValidationCode_ENDORSEMENT_POLICY_FAILURE)
 }
 
@@ -956,15 +954,15 @@ func testInvokeOKMetaUpdateOnly(t *testing.T, l ledger.PeerLedger, v txvalidator
 	rwsetBuilder := rwsetutil.NewRWSetBuilder()
 	rwsetBuilder.AddToMetadataWriteSet(ccID, "somekey", map[string][]byte{})
 	rwset, err := rwsetBuilder.GetTxSimulationResults()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	rwsetBytes, err := rwset.GetPubSimulationBytes()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	tx := getEnv(ccID, nil, rwsetBytes, t)
 	b := &common.Block{Data: &common.BlockData{Data: [][]byte{protoutil.MarshalOrPanic(tx)}}, Header: &common.BlockHeader{Number: 2}}
 
 	err = v.Validate(b)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assertInvalid(b, t, peer.TxValidationCode_ENDORSEMENT_POLICY_FAILURE)
 }
 
@@ -998,15 +996,15 @@ func testInvokeOKPvtMetaUpdateOnly(t *testing.T, l ledger.PeerLedger, v txvalida
 	rwsetBuilder := rwsetutil.NewRWSetBuilder()
 	rwsetBuilder.AddToHashedMetadataWriteSet(ccID, "mycollection", "somekey", map[string][]byte{})
 	rwset, err := rwsetBuilder.GetTxSimulationResults()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	rwsetBytes, err := rwset.GetPubSimulationBytes()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	tx := getEnv(ccID, nil, rwsetBytes, t)
 	b := &common.Block{Data: &common.BlockData{Data: [][]byte{protoutil.MarshalOrPanic(tx)}}, Header: &common.BlockHeader{Number: 2}}
 
 	err = v.Validate(b)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assertInvalid(b, t, peer.TxValidationCode_ENDORSEMENT_POLICY_FAILURE)
 }
 
@@ -1041,21 +1039,21 @@ func testInvokeOKSCC(t *testing.T, l ledger.PeerLedger, v txvalidator.Validator)
 			Type:        peer.ChaincodeSpec_GOLANG}}
 
 	prop, _, err := protoutil.CreateProposalFromCIS(common.HeaderType_ENDORSER_TRANSACTION, "testchannelid", cis, signerSerialized)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	rwsetBuilder := rwsetutil.NewRWSetBuilder()
 	rwsetBuilder.AddToWriteSet("lscc", "cc", protoutil.MarshalOrPanic(&ccp.ChaincodeData{Name: "cc", Version: "ver", InstantiationPolicy: policydsl.MarshaledAcceptAllPolicy}))
 	rwset, err := rwsetBuilder.GetTxSimulationResults()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	rwsetBytes, err := rwset.GetPubSimulationBytes()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	presp, err := protoutil.CreateProposalResponse(prop.Header, prop.Payload, &peer.Response{Status: 200}, rwsetBytes, nil, &peer.ChaincodeID{Name: "lscc", Version: ccVersion}, signer)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	tx, err := protoutil.CreateSignedTx(prop, signer, presp)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	b := &common.Block{Data: &common.BlockData{Data: [][]byte{protoutil.MarshalOrPanic(tx)}}, Header: &common.BlockHeader{Number: 1}}
 
 	err = v.Validate(b)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assertValid(b, t)
 }
 
@@ -1084,7 +1082,7 @@ func testInvokeNOKWritesToLSCC(t *testing.T, l ledger.PeerLedger, v txvalidator.
 	b := &common.Block{Data: &common.BlockData{Data: [][]byte{protoutil.MarshalOrPanic(tx)}}, Header: &common.BlockHeader{Number: 2}}
 
 	err := v.Validate(b)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assertInvalid(b, t, peer.TxValidationCode_ILLEGAL_WRITESET)
 }
 
@@ -1116,7 +1114,7 @@ func testInvokeNOKWritesToESCC(t *testing.T, l ledger.PeerLedger, v txvalidator.
 	}
 
 	err := v.Validate(b)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assertInvalid(b, t, peer.TxValidationCode_ILLEGAL_WRITESET)
 }
 
@@ -1148,7 +1146,7 @@ func testInvokeNOKWritesToNotExt(t *testing.T, l ledger.PeerLedger, v txvalidato
 	}
 
 	err := v.Validate(b)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assertInvalid(b, t, peer.TxValidationCode_ILLEGAL_WRITESET)
 }
 
@@ -1180,7 +1178,7 @@ func testInvokeNOKInvokesNotExt(t *testing.T, l ledger.PeerLedger, v txvalidator
 	}
 
 	err := v.Validate(b)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assertInvalid(b, t, peer.TxValidationCode_ILLEGAL_WRITESET)
 }
 
@@ -1212,7 +1210,7 @@ func testInvokeNOKInvokesEmptyCCName(t *testing.T, l ledger.PeerLedger, v txvali
 	}
 
 	err := v.Validate(b)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assertInvalid(b, t, peer.TxValidationCode_INVALID_OTHER_REASON)
 }
 
@@ -1244,7 +1242,7 @@ func testInvokeNOKExpiredCC(t *testing.T, l ledger.PeerLedger, v txvalidator.Val
 	}
 
 	err := v.Validate(b)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assertInvalid(b, t, peer.TxValidationCode_EXPIRED_CHAINCODE)
 }
 
@@ -1276,7 +1274,7 @@ func testInvokeNOKBogusActions(t *testing.T, l ledger.PeerLedger, v txvalidator.
 	}
 
 	err := v.Validate(b)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assertInvalid(b, t, peer.TxValidationCode_BAD_RWSET)
 }
 
@@ -1306,7 +1304,7 @@ func testInvokeNOKCCDoesntExist(t *testing.T, l ledger.PeerLedger, v txvalidator
 	}
 
 	err := v.Validate(b)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assertInvalid(b, t, peer.TxValidationCode_INVALID_OTHER_REASON)
 }
 
@@ -1338,7 +1336,7 @@ func testInvokeNOKVSCCUnspecified(t *testing.T, l ledger.PeerLedger, v txvalidat
 	}
 
 	err := v.Validate(b)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assertInvalid(b, t, peer.TxValidationCode_INVALID_OTHER_REASON)
 }
 
@@ -1363,7 +1361,7 @@ func testInvokeNoBlock(t *testing.T, l ledger.PeerLedger, v txvalidator.Validato
 		Data:   &common.BlockData{Data: [][]byte{}},
 		Header: &common.BlockHeader{},
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 }
 
 func TestValidateTxWithStateBasedEndorsement(t *testing.T) {
@@ -1387,7 +1385,7 @@ func TestValidateTxWithStateBasedEndorsement(t *testing.T) {
 
 		err, b := validateTxWithStateBasedEndorsement(t, l, v)
 
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assertValid(b, t)
 	})
 
@@ -1397,7 +1395,7 @@ func TestValidateTxWithStateBasedEndorsement(t *testing.T) {
 
 		err, b := validateTxWithStateBasedEndorsement(t, l, v)
 
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assertInvalid(b, t, peer.TxValidationCode_ENDORSEMENT_POLICY_FAILURE)
 	})
 }
@@ -1422,6 +1420,12 @@ func validateTxWithStateBasedEndorsement(t *testing.T, l ledger.PeerLedger, v tx
 // able to get access to state db
 type mockLedger struct {
 	mock.Mock
+}
+
+// TxIDExists returns true if the specified txID is already present in one of the already committed blocks
+func (m *mockLedger) TxIDExists(txID string) (bool, error) {
+	args := m.Called(txID)
+	return args.Get(0).(bool), args.Error(1)
 }
 
 // GetTransactionByID returns transaction by ud
@@ -1517,13 +1521,25 @@ func (m *mockLedger) GetConfigHistoryRetriever() (ledger.ConfigHistoryRetriever,
 	return args.Get(0).(ledger.ConfigHistoryRetriever), nil
 }
 
-func (m *mockLedger) CommitPvtDataOfOldBlocks(reconciledPvtdata []*ledger.ReconciledPvtdata) ([]*ledger.PvtdataHashMismatch, error) {
+func (m *mockLedger) CommitPvtDataOfOldBlocks(reconciledPvtdata []*ledger.ReconciledPvtdata, unreconciled ledger.MissingPvtDataInfo) ([]*ledger.PvtdataHashMismatch, error) {
 	return nil, nil
 }
 
 func (m *mockLedger) GetMissingPvtDataTracker() (ledger.MissingPvtDataTracker, error) {
 	args := m.Called()
 	return args.Get(0).(ledger.MissingPvtDataTracker), nil
+}
+
+func (m *mockLedger) SubmitSnapshotRequest(height uint64) error {
+	return nil
+}
+
+func (m *mockLedger) PendingSnapshotRequests() ([]uint64, error) {
+	return nil, nil
+}
+
+func (m *mockLedger) CancelSnapshotRequest(height uint64) error {
+	return nil
 }
 
 // mockQueryExecutor mock of the query executor,
@@ -1611,9 +1627,9 @@ func (exec *mockQueryExecutor) GetPrivateDataMetadata(namespace, collection, key
 func createCustomSupportAndLedger(t *testing.T) (*mocktxvalidator.Support, ledger.PeerLedger, func()) {
 	ledgerMgr, cleanup := constructLedgerMgrWithTestDefaults(t, "txvalidator")
 	gb, err := ctxt.MakeGenesisBlock("TestLedger")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	l, err := ledgerMgr.CreateLedger("TestLedger", gb)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	identity := &mocks2.Identity{}
 	identity.GetIdentifierReturns(&msp.IdentityIdentifier{
@@ -1636,7 +1652,7 @@ func TestDynamicCapabilitiesAndMSP(t *testing.T) {
 	defer cleanup()
 
 	cryptoProvider, err := sw.NewDefaultSecurityLevelWithKeystore(sw.NewDummyKeyStore())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	v := txvalidatorv14.NewTxValidator("", semaphore.New(10), support, pm, cryptoProvider)
 
 	ccID := "mycc"
@@ -1651,7 +1667,7 @@ func TestDynamicCapabilitiesAndMSP(t *testing.T) {
 
 	// Perform a validation of a block
 	err = v.Validate(b)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assertValid(b, t)
 	// Record the number of times the capabilities and the MSP Manager were invoked
 	capabilityInvokeCount := support.CapabilitiesInvokeCount()
@@ -1659,15 +1675,15 @@ func TestDynamicCapabilitiesAndMSP(t *testing.T) {
 
 	// Perform another validation pass, and ensure it is valid
 	err = v.Validate(b)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assertValid(b, t)
 
 	// Ensure that the capabilities were retrieved from the support twice,
 	// which proves that the capabilities are dynamically retrieved from the support each time
-	assert.Equal(t, 2*capabilityInvokeCount, support.CapabilitiesInvokeCount())
+	require.Equal(t, 2*capabilityInvokeCount, support.CapabilitiesInvokeCount())
 	// Ensure that the MSP Manager was retrieved from the support twice,
 	// which proves that the MSP Manager is dynamically retrieved from the support each time
-	assert.Equal(t, 2*mspManagerInvokeCount, support.MSPManagerInvokeCount())
+	require.Equal(t, 2*mspManagerInvokeCount, support.MSPManagerInvokeCount())
 }
 
 // TestLedgerIsNoAvailable simulates and provides a test for following scenario,
@@ -1681,7 +1697,7 @@ func TestLedgerIsNoAvailable(t *testing.T) {
 	theLedger := new(mockLedger)
 	pm := &mocks.Mapper{}
 	cryptoProvider, err := sw.NewDefaultSecurityLevelWithKeystore(sw.NewDummyKeyStore())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	validator := txvalidatorv14.NewTxValidator(
 		"",
 		semaphore.New(10),
@@ -1693,7 +1709,7 @@ func TestLedgerIsNoAvailable(t *testing.T) {
 	ccID := "mycc"
 	tx := getEnv(ccID, nil, createRWset(t, ccID), t)
 
-	theLedger.On("GetTransactionByID", mock.Anything).Return(&peer.ProcessedTransaction{}, ledger.NotFoundInIndexErr(""))
+	theLedger.On("TxIDExists", mock.Anything).Return(false, nil)
 
 	queryExecutor := new(mockQueryExecutor)
 	queryExecutor.On("GetState", mock.Anything, mock.Anything).Return([]byte{}, errors.New("Unable to connect to DB"))
@@ -1706,7 +1722,7 @@ func TestLedgerIsNoAvailable(t *testing.T) {
 
 	err = validator.Validate(b)
 
-	assertion := assert.New(t)
+	assertion := require.New(t)
 	// We suppose to get the error which indicates we cannot commit the block
 	assertion.Error(err)
 	// The error exptected to be of type VSCCInfoLookupFailureError
@@ -1717,7 +1733,7 @@ func TestLedgerIsNotAvailableForCheckingTxidDuplicate(t *testing.T) {
 	theLedger := new(mockLedger)
 	pm := &mocks.Mapper{}
 	cryptoProvider, err := sw.NewDefaultSecurityLevelWithKeystore(sw.NewDummyKeyStore())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	validator := txvalidatorv14.NewTxValidator(
 		"",
 		semaphore.New(10),
@@ -1729,7 +1745,7 @@ func TestLedgerIsNotAvailableForCheckingTxidDuplicate(t *testing.T) {
 	ccID := "mycc"
 	tx := getEnv(ccID, nil, createRWset(t, ccID), t)
 
-	theLedger.On("GetTransactionByID", mock.Anything).Return(&peer.ProcessedTransaction{}, errors.New("Unable to connect to DB"))
+	theLedger.On("TxIDExists", mock.Anything).Return(false, errors.New("Unable to connect to DB"))
 
 	b := &common.Block{
 		Data:   &common.BlockData{Data: [][]byte{protoutil.MarshalOrPanic(tx)}},
@@ -1738,7 +1754,7 @@ func TestLedgerIsNotAvailableForCheckingTxidDuplicate(t *testing.T) {
 
 	err = validator.Validate(b)
 
-	assertion := assert.New(t)
+	assertion := require.New(t)
 	// We expect a validation error because the ledger wasn't ready to tell us whether there was a tx with that ID or not
 	assertion.Error(err)
 }
@@ -1747,7 +1763,7 @@ func TestDuplicateTxId(t *testing.T) {
 	theLedger := new(mockLedger)
 	pm := &mocks.Mapper{}
 	cryptoProvider, err := sw.NewDefaultSecurityLevelWithKeystore(sw.NewDummyKeyStore())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	validator := txvalidatorv14.NewTxValidator(
 		"",
 		semaphore.New(10),
@@ -1759,7 +1775,7 @@ func TestDuplicateTxId(t *testing.T) {
 	ccID := "mycc"
 	tx := getEnv(ccID, nil, createRWset(t, ccID), t)
 
-	theLedger.On("GetTransactionByID", mock.Anything).Return(&peer.ProcessedTransaction{}, nil)
+	theLedger.On("TxIDExists", mock.Anything).Return(true, nil)
 
 	b := &common.Block{
 		Data:   &common.BlockData{Data: [][]byte{protoutil.MarshalOrPanic(tx)}},
@@ -1768,7 +1784,7 @@ func TestDuplicateTxId(t *testing.T) {
 
 	err = validator.Validate(b)
 
-	assertion := assert.New(t)
+	assertion := require.New(t)
 	// We expect no validation error because we simply mark the tx as invalid
 	assertion.NoError(err)
 
@@ -1788,7 +1804,7 @@ func TestValidationInvalidEndorsing(t *testing.T) {
 	plugin.On("Validate", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("invalid tx"))
 	pm.On("FactoryByName", vp.Name("vscc")).Return(factory)
 	cryptoProvider, err := sw.NewDefaultSecurityLevelWithKeystore(sw.NewDummyKeyStore())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	validator := txvalidatorv14.NewTxValidator(
 		"",
 		semaphore.New(10),
@@ -1800,7 +1816,7 @@ func TestValidationInvalidEndorsing(t *testing.T) {
 	ccID := "mycc"
 	tx := getEnv(ccID, nil, createRWset(t, ccID), t)
 
-	theLedger.On("GetTransactionByID", mock.Anything).Return(&peer.ProcessedTransaction{}, ledger.NotFoundInIndexErr(""))
+	theLedger.On("TxIDExists", mock.Anything).Return(false, nil)
 
 	cd := &ccp.ChaincodeData{
 		Name:    ccID,
@@ -1823,13 +1839,13 @@ func TestValidationInvalidEndorsing(t *testing.T) {
 	// Keep default callback
 	err = validator.Validate(b)
 	// Restore default callback
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assertInvalid(b, t, peer.TxValidationCode_ENDORSEMENT_POLICY_FAILURE)
 }
 
 func createMockLedger(t *testing.T, ccID string) *mockLedger {
 	l := new(mockLedger)
-	l.On("GetTransactionByID", mock.Anything).Return(&peer.ProcessedTransaction{}, ledger.NotFoundInIndexErr(""))
+	l.On("TxIDExists", mock.Anything).Return(false, nil)
 	cd := &ccp.ChaincodeData{
 		Name:    ccID,
 		Version: ccVersion,
@@ -1866,7 +1882,7 @@ func TestValidationPluginExecutionError(t *testing.T) {
 
 	err := v.Validate(b)
 	executionErr := err.(*commonerrors.VSCCExecutionFailureError)
-	assert.Contains(t, executionErr.Error(), "I/O error")
+	require.Contains(t, executionErr.Error(), "I/O error")
 }
 
 func TestValidationPluginNotFound(t *testing.T) {
@@ -1882,7 +1898,7 @@ func TestValidationPluginNotFound(t *testing.T) {
 	pm := &mocks.Mapper{}
 	pm.On("FactoryByName", vp.Name("vscc")).Return(nil)
 	cryptoProvider, err := sw.NewDefaultSecurityLevelWithKeystore(sw.NewDummyKeyStore())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	validator := txvalidatorv14.NewTxValidator(
 		"",
 		semaphore.New(10),
@@ -1892,7 +1908,7 @@ func TestValidationPluginNotFound(t *testing.T) {
 	)
 	err = validator.Validate(b)
 	executionErr := err.(*commonerrors.VSCCExecutionFailureError)
-	assert.Contains(t, executionErr.Error(), "plugin with name vscc wasn't found")
+	require.Contains(t, executionErr.Error(), "plugin with name vscc wasn't found")
 }
 
 var signer msp.SigningIdentity
@@ -1925,10 +1941,6 @@ func TestMain(m *testing.M) {
 	}
 
 	os.Exit(m.Run())
-}
-
-func ToHex(q uint64) string {
-	return "0x" + strconv.FormatUint(q, 16)
 }
 
 func constructLedgerMgrWithTestDefaults(t *testing.T, testDir string) (*ledgermgmt.LedgerMgr, func()) {

@@ -15,12 +15,12 @@ import (
 	"strings"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/hyperledger/fabric-config/protolator"
+	"github.com/hyperledger/fabric-config/protolator/protoext/ordererext"
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric/bccsp/factory"
 	"github.com/hyperledger/fabric/common/channelconfig"
 	"github.com/hyperledger/fabric/common/flogging"
-	"github.com/hyperledger/fabric/common/tools/protolator"
-	"github.com/hyperledger/fabric/common/tools/protolator/protoext/ordererext"
 	"github.com/hyperledger/fabric/internal/configtxgen/encoder"
 	"github.com/hyperledger/fabric/internal/configtxgen/genesisconfig"
 	"github.com/hyperledger/fabric/internal/configtxgen/metadata"
@@ -38,10 +38,15 @@ func doOutputBlock(config *genesisconfig.Profile, channelID string, outputBlock 
 	}
 	logger.Info("Generating genesis block")
 	if config.Orderer == nil {
-		return errors.Errorf("refusing to generate block which is missing orderer section")
+		return errors.New("refusing to generate block which is missing orderer section")
 	}
-	if config.Consortiums == nil {
-		logger.Warning("Genesis block does not contain a consortiums group definition.  This block cannot be used for orderer bootstrap.")
+	if config.Consortiums != nil {
+		logger.Info("Creating system channel genesis block")
+	} else {
+		if config.Application == nil {
+			return errors.New("refusing to generate application channel block which is missing application section")
+		}
+		logger.Info("Creating application channel genesis block")
 	}
 	genesisBlock := pgen.GenesisBlockForChannel(channelID)
 	logger.Info("Writing genesis block")
@@ -114,6 +119,9 @@ func doOutputAnchorPeersUpdate(conf *genesisconfig.Profile, channelID string, ou
 	}
 
 	updateTx, err := protoutil.CreateSignedEnvelope(cb.HeaderType_CONFIG_UPDATE, channelID, nil, newConfigUpdateEnv, 0, 0)
+	if err != nil {
+		return errors.WithMessage(err, "could not create signed envelope")
+	}
 
 	logger.Info("Writing anchor peer update")
 	err = writeFile(outputAnchorPeersUpdate, protoutil.MarshalOrPanic(updateTx), 0640)

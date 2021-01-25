@@ -29,10 +29,12 @@ function filterExcludedAndGeneratedFiles {
         '_sk$'
         '\.tx$'
         '\.txt$'
+        '^NOTICE$'
         '(^|/)testdata\/'
         '(^|/)vendor\/'
         '(^|/)Pipfile$'
         '(^|/)Pipfile\.lock$'
+        '(^|/)tox\.ini$'
     )
 
     local filter

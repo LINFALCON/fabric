@@ -8,11 +8,11 @@ package configtx
 
 import (
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -32,8 +32,6 @@ type Orderer struct {
 	// OrdererType is the type of orderer
 	// Options: `Solo`, `Kafka` or `Raft`
 	OrdererType string
-	// Addresses is the list of orderer addresses.
-	Addresses []Address
 	// BatchTimeout is the wait time between transactions.
 	BatchTimeout  time.Duration
 	BatchSize     orderer.BatchSize
@@ -61,6 +59,23 @@ type OrdererGroup struct {
 type OrdererOrg struct {
 	orgGroup *cb.ConfigGroup
 	name     string
+}
+
+// MSP returns an OrganizationMSP object that can be used to configure the organization's MSP.
+func (o *OrdererOrg) MSP() *OrganizationMSP {
+	return &OrganizationMSP{
+		configGroup: o.orgGroup,
+	}
+}
+
+// EtcdRaftOptionsValue encapsulates the configuration functions used to modify an etcdraft configuration's options.
+type EtcdRaftOptionsValue struct {
+	value *cb.ConfigValue
+}
+
+// BatchSizeValue encapsulates the configuration functions used to modify an orderer configuration's batch size values.
+type BatchSizeValue struct {
+	value *cb.ConfigValue
 }
 
 // Orderer returns the orderer group from the updated config.
@@ -120,12 +135,6 @@ func (o *OrdererGroup) Configuration() (Orderer, error) {
 		return Orderer{}, fmt.Errorf("config contains unknown consensus type '%s'", consensusTypeProto.Type)
 	}
 
-	// ORDERER ADDRESSES
-	ordererAddresses, err := o.getOrdererAddresses()
-	if err != nil {
-		return Orderer{}, err
-	}
-
 	// BATCHSIZE AND TIMEOUT
 	batchSize := &ob.BatchSize{}
 	err = unmarshalConfigValueAtKey(o.ordererGroup, orderer.BatchSizeKey, batchSize)
@@ -176,7 +185,6 @@ func (o *OrdererGroup) Configuration() (Orderer, error) {
 
 	return Orderer{
 		OrdererType:  ordererType,
-		Addresses:    ordererAddresses,
 		BatchTimeout: batchTimeout,
 		BatchSize: orderer.BatchSize{
 			MaxMessageCount:   batchSize.MaxMessageCount,
@@ -193,25 +201,172 @@ func (o *OrdererGroup) Configuration() (Orderer, error) {
 	}, nil
 }
 
-func (o *OrdererGroup) getOrdererAddresses() ([]Address, error) {
-	ordererAddressesProto := &cb.OrdererAddresses{}
-	err := unmarshalConfigValueAtKey(o.channelGroup, OrdererAddressesKey, ordererAddressesProto)
+// BatchSize returns a BatchSizeValue that can be used to configure an orderer configuration's batch size parameters.
+func (o *OrdererGroup) BatchSize() *BatchSizeValue {
+	return &BatchSizeValue{
+		value: o.ordererGroup.Values[orderer.BatchSizeKey],
+	}
+}
+
+// SetMaxMessageCount sets an orderer configuration's batch size max message count.
+func (b *BatchSizeValue) SetMaxMessageCount(maxMessageCount uint32) error {
+	batchSize := &ob.BatchSize{}
+	err := proto.Unmarshal(b.value.Value, batchSize)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	var addresses []Address
+	batchSize.MaxMessageCount = maxMessageCount
+	b.value.Value, err = proto.Marshal(batchSize)
 
-	for _, a := range ordererAddressesProto.Addresses {
-		host, port, err := parseAddress(a)
-		if err != nil {
-			return nil, err
-		}
+	return err
+}
 
-		addresses = append(addresses, Address{Host: host, Port: port})
+// SetAbsoluteMaxBytes sets an orderer configuration's batch size max block size.
+func (b *BatchSizeValue) SetAbsoluteMaxBytes(maxBytes uint32) error {
+	batchSize := &ob.BatchSize{}
+	err := proto.Unmarshal(b.value.Value, batchSize)
+	if err != nil {
+		return err
 	}
 
-	return addresses, nil
+	batchSize.AbsoluteMaxBytes = maxBytes
+	b.value.Value, err = proto.Marshal(batchSize)
+
+	return err
+}
+
+// SetPreferredMaxBytes sets an orderer configuration's batch size preferred size of blocks.
+func (b *BatchSizeValue) SetPreferredMaxBytes(maxBytes uint32) error {
+	batchSize := &ob.BatchSize{}
+	err := proto.Unmarshal(b.value.Value, batchSize)
+	if err != nil {
+		return err
+	}
+
+	batchSize.PreferredMaxBytes = maxBytes
+	b.value.Value, err = proto.Marshal(batchSize)
+
+	return err
+}
+
+// SetBatchTimeout sets the wait time between transactions.
+func (o *OrdererGroup) SetBatchTimeout(timeout time.Duration) error {
+	return setValue(o.ordererGroup, batchTimeoutValue(timeout.String()), AdminsPolicyKey)
+}
+
+// SetMaxChannels sets the maximum count of channels an orderer supports.
+func (o *OrdererGroup) SetMaxChannels(max int) error {
+	return setValue(o.ordererGroup, channelRestrictionsValue(uint64(max)), AdminsPolicyKey)
+}
+
+// SetEtcdRaftConsensusType sets the orderer consensus type to etcdraft, sets etcdraft metadata, and consensus state.
+func (o *OrdererGroup) SetEtcdRaftConsensusType(consensusMetadata orderer.EtcdRaft, consensusState orderer.ConsensusState) error {
+	consensusMetadataBytes, err := marshalEtcdRaftMetadata(consensusMetadata)
+	if err != nil {
+		return fmt.Errorf("marshaling etcdraft metadata: %v", err)
+	}
+
+	return setValue(o.ordererGroup, consensusTypeValue(orderer.ConsensusTypeEtcdRaft, consensusMetadataBytes, ob.ConsensusType_State_value[string(consensusState)]), AdminsPolicyKey)
+}
+
+// SetConsensusState sets the consensus state.
+func (o *OrdererGroup) SetConsensusState(consensusState orderer.ConsensusState) error {
+	consensusTypeProto := &ob.ConsensusType{}
+	err := unmarshalConfigValueAtKey(o.ordererGroup, orderer.ConsensusTypeKey, consensusTypeProto)
+	if err != nil {
+		return err
+	}
+
+	return setValue(o.ordererGroup, consensusTypeValue(consensusTypeProto.Type, consensusTypeProto.Metadata, ob.ConsensusType_State_value[string(consensusState)]), AdminsPolicyKey)
+}
+
+// EtcdRaftOptions returns an EtcdRaftOptionsValue that can be used to configure an etcdraft configuration's options.
+func (o *OrdererGroup) EtcdRaftOptions() *EtcdRaftOptionsValue {
+	return &EtcdRaftOptionsValue{
+		value: o.ordererGroup.Values[orderer.ConsensusTypeKey],
+	}
+}
+
+func (e *EtcdRaftOptionsValue) etcdRaftConfig(consensusTypeProto *ob.ConsensusType) (orderer.EtcdRaft, error) {
+	err := proto.Unmarshal(e.value.Value, consensusTypeProto)
+	if err != nil {
+		return orderer.EtcdRaft{}, err
+	}
+
+	return unmarshalEtcdRaftMetadata(consensusTypeProto.Metadata)
+}
+
+func (e *EtcdRaftOptionsValue) setEtcdRaftConfig(consensusTypeProto *ob.ConsensusType, etcdRaft orderer.EtcdRaft) error {
+	consensusMetadata, err := marshalEtcdRaftMetadata(etcdRaft)
+	if err != nil {
+		return fmt.Errorf("marshaling etcdraft metadata: %v", err)
+	}
+
+	consensusTypeProto.Metadata = consensusMetadata
+
+	e.value.Value, err = proto.Marshal(consensusTypeProto)
+	return err
+}
+
+// SetTickInterval sets the Etcdraft's tick interval.
+func (e *EtcdRaftOptionsValue) SetTickInterval(interval string) error {
+	consensusTypeProto := &ob.ConsensusType{}
+	etcdRaft, err := e.etcdRaftConfig(consensusTypeProto)
+	if err != nil {
+		return nil
+	}
+
+	etcdRaft.Options.TickInterval = interval
+	return e.setEtcdRaftConfig(consensusTypeProto, etcdRaft)
+}
+
+// SetElectionInterval sets the Etcdraft's election interval.
+func (e *EtcdRaftOptionsValue) SetElectionInterval(interval uint32) error {
+	consensusTypeProto := &ob.ConsensusType{}
+	etcdRaft, err := e.etcdRaftConfig(consensusTypeProto)
+	if err != nil {
+		return nil
+	}
+
+	etcdRaft.Options.ElectionTick = interval
+	return e.setEtcdRaftConfig(consensusTypeProto, etcdRaft)
+}
+
+// SetHeartbeatTick sets the Etcdraft's heartbeat tick interval.
+func (e *EtcdRaftOptionsValue) SetHeartbeatTick(tick uint32) error {
+	consensusTypeProto := &ob.ConsensusType{}
+	etcdRaft, err := e.etcdRaftConfig(consensusTypeProto)
+	if err != nil {
+		return nil
+	}
+
+	etcdRaft.Options.HeartbeatTick = tick
+	return e.setEtcdRaftConfig(consensusTypeProto, etcdRaft)
+}
+
+// SetMaxInflightBlocks sets the Etcdraft's max inflight blocks.
+func (e *EtcdRaftOptionsValue) SetMaxInflightBlocks(maxBlks uint32) error {
+	consensusTypeProto := &ob.ConsensusType{}
+	etcdRaft, err := e.etcdRaftConfig(consensusTypeProto)
+	if err != nil {
+		return nil
+	}
+
+	etcdRaft.Options.MaxInflightBlocks = maxBlks
+	return e.setEtcdRaftConfig(consensusTypeProto, etcdRaft)
+}
+
+// SetSnapshotIntervalSize sets the Etcdraft's snapshot interval size.
+func (e *EtcdRaftOptionsValue) SetSnapshotIntervalSize(intervalSize uint32) error {
+	consensusTypeProto := &ob.ConsensusType{}
+	etcdRaft, err := e.etcdRaftConfig(consensusTypeProto)
+	if err != nil {
+		return nil
+	}
+
+	etcdRaft.Options.SnapshotIntervalSize = intervalSize
+	return e.setEtcdRaftConfig(consensusTypeProto, etcdRaft)
 }
 
 // Configuration retrieves an existing org's configuration from an
@@ -222,17 +377,21 @@ func (o *OrdererOrg) Configuration() (Organization, error) {
 		return Organization{}, err
 	}
 
-	// Orderer organization requires orderer endpoints.
-	endpointsProtos := &cb.OrdererAddresses{}
-	err = unmarshalConfigValueAtKey(o.orgGroup, EndpointsKey, endpointsProtos)
-	if err != nil {
-		return Organization{}, err
+	// OrdererEndpoints are optional when retrieving from an existing config
+	org.OrdererEndpoints = nil
+	_, ok := o.orgGroup.Values[EndpointsKey]
+	if ok {
+		endpointsProtos := &cb.OrdererAddresses{}
+		err = unmarshalConfigValueAtKey(o.orgGroup, EndpointsKey, endpointsProtos)
+		if err != nil {
+			return Organization{}, err
+		}
+		ordererEndpoints := make([]string, len(endpointsProtos.Addresses))
+		for i, address := range endpointsProtos.Addresses {
+			ordererEndpoints[i] = address
+		}
+		org.OrdererEndpoints = ordererEndpoints
 	}
-	ordererEndpoints := make([]string, len(endpointsProtos.Addresses))
-	for i, address := range endpointsProtos.Addresses {
-		ordererEndpoints[i] = address
-	}
-	org.OrdererEndpoints = ordererEndpoints
 
 	// Remove AnchorPeers which are application org specific.
 	org.AnchorPeers = nil
@@ -263,16 +422,84 @@ func (o *OrdererGroup) RemoveOrganization(name string) {
 // SetConfiguration modifies an updated config's Orderer configuration
 // via the passed in Orderer values. It skips updating OrdererOrgGroups and Policies.
 func (o *OrdererGroup) SetConfiguration(ord Orderer) error {
-	// update orderer addresses
-	if len(ord.Addresses) > 0 {
-		err := setValue(o.channelGroup, ordererAddressesValue(ord.Addresses), ordererAdminsPolicyName)
-		if err != nil {
-			return err
+	// update orderer values
+	err := addOrdererValues(o.ordererGroup, ord)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// AddConsenter adds a consenter to an etcdraft configuration.
+func (o *OrdererGroup) AddConsenter(consenter orderer.Consenter) error {
+	cfg, err := o.Configuration()
+	if err != nil {
+		return err
+	}
+
+	if cfg.OrdererType != orderer.ConsensusTypeEtcdRaft {
+		return fmt.Errorf("consensus type %s is not etcdraft", cfg.OrdererType)
+	}
+
+	for _, c := range cfg.EtcdRaft.Consenters {
+		if reflect.DeepEqual(c, consenter) {
+			return nil
 		}
 	}
 
-	// update orderer values
-	err := addOrdererValues(o.ordererGroup, ord)
+	cfg.EtcdRaft.Consenters = append(cfg.EtcdRaft.Consenters, consenter)
+
+	consensusMetadata, err := marshalEtcdRaftMetadata(cfg.EtcdRaft)
+	if err != nil {
+		return fmt.Errorf("marshaling etcdraft metadata: %v", err)
+	}
+
+	consensusState, ok := ob.ConsensusType_State_value[string(cfg.State)]
+	if !ok {
+		return fmt.Errorf("unknown consensus state '%s'", cfg.State)
+	}
+
+	err = setValue(o.ordererGroup, consensusTypeValue(cfg.OrdererType, consensusMetadata, consensusState), AdminsPolicyKey)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// RemoveConsenter removes a consenter from an etcdraft configuration.
+func (o *OrdererGroup) RemoveConsenter(consenter orderer.Consenter) error {
+	cfg, err := o.Configuration()
+	if err != nil {
+		return err
+	}
+
+	if cfg.OrdererType != orderer.ConsensusTypeEtcdRaft {
+		return fmt.Errorf("consensus type %s is not etcdraft", cfg.OrdererType)
+	}
+
+	consenters := cfg.EtcdRaft.Consenters[:]
+	for i, c := range cfg.EtcdRaft.Consenters {
+		if reflect.DeepEqual(c, consenter) {
+			consenters = append(consenters[:i], consenters[i+1:]...)
+			break
+		}
+	}
+
+	cfg.EtcdRaft.Consenters = consenters
+
+	consensusMetadata, err := marshalEtcdRaftMetadata(cfg.EtcdRaft)
+	if err != nil {
+		return fmt.Errorf("marshaling etcdraft metadata: %v", err)
+	}
+
+	consensusState, ok := ob.ConsensusType_State_value[string(cfg.State)]
+	if !ok {
+		return fmt.Errorf("unknown consensus state '%s'", cfg.State)
+	}
+
+	err = setValue(o.ordererGroup, consensusTypeValue(cfg.OrdererType, consensusMetadata, consensusState), AdminsPolicyKey)
 	if err != nil {
 		return err
 	}
@@ -417,16 +644,10 @@ func (o *OrdererGroup) Policies() (map[string]Policy, error) {
 	return getPolicies(o.ordererGroup.Policies)
 }
 
-// MSP returns the MSP value for an orderer organization in the
-// updated config.
-func (o *OrdererOrg) MSP() (MSP, error) {
-	return getMSPConfig(o.orgGroup)
-}
-
 // SetMSP updates the MSP config for the specified orderer org
 // in the updated config.
 func (o *OrdererOrg) SetMSP(updatedMSP MSP) error {
-	currentMSP, err := o.MSP()
+	currentMSP, err := o.MSP().Configuration()
 	if err != nil {
 		return fmt.Errorf("retrieving msp: %v", err)
 	}
@@ -440,37 +661,12 @@ func (o *OrdererOrg) SetMSP(updatedMSP MSP) error {
 		return err
 	}
 
-	err = o.setMSPConfig(updatedMSP)
+	err = updatedMSP.setConfig(o.orgGroup)
 	if err != nil {
 		return err
 	}
 
 	return nil
-}
-
-func (o *OrdererOrg) setMSPConfig(updatedMSP MSP) error {
-	mspConfig, err := newMSPConfig(updatedMSP)
-	if err != nil {
-		return fmt.Errorf("new msp config: %v", err)
-	}
-
-	err = setValue(o.orgGroup, mspValue(mspConfig), AdminsPolicyKey)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// CreateMSPCRL creates a CRL that revokes the provided certificates
-// for the specified orderer org signed by the provided SigningIdentity.
-func (o *OrdererOrg) CreateMSPCRL(signingIdentity *SigningIdentity, certs ...*x509.Certificate) (*pkix.CertificateList, error) {
-	msp, err := o.MSP()
-	if err != nil {
-		return nil, fmt.Errorf("retrieving orderer msp: %s", err)
-	}
-
-	return msp.newMSPCRL(signingIdentity, certs...)
 }
 
 // SetPolicy sets the specified policy in the orderer org group's config policy map.
@@ -496,6 +692,12 @@ func (o *OrdererOrg) Policies() (map[string]Policy, error) {
 	return getPolicies(o.orgGroup.Policies)
 }
 
+// RemoveLegacyKafkaBrokers removes the legacy kafka brokers config key and value from config.
+// In fabric 2.0, kafka was deprecated as a consensus type.
+func (o *OrdererGroup) RemoveLegacyKafkaBrokers() {
+	delete(o.ordererGroup.Values, orderer.KafkaBrokersKey)
+}
+
 // newOrdererGroup returns the orderer component of the channel configuration.
 // It defines parameters of the ordering service about how large blocks should be,
 // how frequently they should be emitted, etc. as well as the organizations of the ordering network.
@@ -517,6 +719,11 @@ func newOrdererGroup(orderer Orderer) (*cb.ConfigGroup, error) {
 
 	// add orderer groups
 	for _, org := range orderer.Organizations {
+		// As of fabric v1.4 we expect new system channels to contain orderer endpoints at the org level
+		if len(org.OrdererEndpoints) == 0 {
+			return nil, fmt.Errorf("orderer endpoints are not defined for org %s", org.Name)
+		}
+
 		ordererGroup.Groups[org.Name], err = newOrdererOrgConfigGroup(org)
 		if err != nil {
 			return nil, fmt.Errorf("org group '%s': %v", org.Name, err)
@@ -777,27 +984,6 @@ func unmarshalEtcdRaftMetadata(mdBytes []byte) (orderer.EtcdRaft, error) {
 			SnapshotIntervalSize: etcdRaftMetadata.Options.SnapshotIntervalSize,
 		},
 	}, nil
-}
-
-func getOrdererAddresses(config *cb.Config) ([]Address, error) {
-	ordererAddressesProto := &cb.OrdererAddresses{}
-	err := unmarshalConfigValueAtKey(config.ChannelGroup, OrdererAddressesKey, ordererAddressesProto)
-	if err != nil {
-		return nil, err
-	}
-
-	var addresses []Address
-
-	for _, a := range ordererAddressesProto.Addresses {
-		host, port, err := parseAddress(a)
-		if err != nil {
-			return nil, err
-		}
-
-		addresses = append(addresses, Address{Host: host, Port: port})
-	}
-
-	return addresses, nil
 }
 
 // getOrdererOrg returns the organization config group for an orderer org in the

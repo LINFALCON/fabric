@@ -8,7 +8,6 @@ package sw
 
 import (
 	"bytes"
-	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -31,7 +30,7 @@ import (
 	"github.com/hyperledger/fabric/bccsp/signer"
 	"github.com/hyperledger/fabric/bccsp/sw/mocks"
 	"github.com/hyperledger/fabric/bccsp/utils"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/sha3"
 )
 
@@ -47,11 +46,11 @@ type testConfig struct {
 
 func (tc testConfig) Provider(t *testing.T) (bccsp.BCCSP, bccsp.KeyStore, func()) {
 	td, err := ioutil.TempDir(tempDir, "test")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	ks, err := NewFileBasedKeyStore(nil, td, false)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	p, err := NewWithParams(tc.securityLevel, tc.hashFamily, ks)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	return p, ks, func() { os.RemoveAll(td) }
 }
 
@@ -1345,15 +1344,15 @@ func TestAddWrapper(t *testing.T) {
 	defer cleanup()
 
 	sw, ok := p.(*CSP)
-	assert.True(t, ok)
+	require.True(t, ok)
 
 	tester := func(o interface{}, getter func(t reflect.Type) (interface{}, bool)) {
 		tt := reflect.TypeOf(o)
 		err := sw.AddWrapper(tt, o)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		o2, ok := getter(tt)
-		assert.True(t, ok)
-		assert.Equal(t, o, o2)
+		require.True(t, ok)
+		require.Equal(t, o, o2)
 	}
 
 	tester(&mocks.KeyGenerator{}, func(t reflect.Type) (interface{}, bool) { o, ok := sw.KeyGenerators[t]; return o, ok })
@@ -1367,33 +1366,6 @@ func TestAddWrapper(t *testing.T) {
 
 	// Add invalid wrapper
 	err := sw.AddWrapper(reflect.TypeOf(cleanup), cleanup)
-	assert.Error(t, err)
-	assert.Equal(t, err.Error(), "wrapper type not valid, must be on of: KeyGenerator, KeyDeriver, KeyImporter, Encryptor, Decryptor, Signer, Verifier, Hasher")
-}
-
-func getCryptoHashIndex(t *testing.T) crypto.Hash {
-	switch currentTestConfig.hashFamily {
-	case "SHA2":
-		switch currentTestConfig.securityLevel {
-		case 256:
-			return crypto.SHA256
-		case 384:
-			return crypto.SHA384
-		default:
-			t.Fatalf("Invalid security level [%d]", currentTestConfig.securityLevel)
-		}
-	case "SHA3":
-		switch currentTestConfig.securityLevel {
-		case 256:
-			return crypto.SHA3_256
-		case 384:
-			return crypto.SHA3_384
-		default:
-			t.Fatalf("Invalid security level [%d]", currentTestConfig.securityLevel)
-		}
-	default:
-		t.Fatalf("Invalid hash family [%s]", currentTestConfig.hashFamily)
-	}
-
-	return crypto.SHA3_256
+	require.Error(t, err)
+	require.Equal(t, err.Error(), "wrapper type not valid, must be on of: KeyGenerator, KeyDeriver, KeyImporter, Encryptor, Decryptor, Signer, Verifier, Hasher")
 }

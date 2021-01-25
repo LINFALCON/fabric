@@ -31,7 +31,6 @@ const (
 	nsJoiner       = "$$"
 	pvtDataPrefix  = "p"
 	hashDataPrefix = "h"
-	couchDB        = "CouchDB"
 )
 
 // StateDBConfig encapsulates the configuration for stateDB on the ledger.
@@ -47,14 +46,14 @@ type StateDBConfig struct {
 // DBProvider encapsulates other providers such as VersionedDBProvider and
 // BookeepingProvider which are required to create DB for a channel
 type DBProvider struct {
-	statedb.VersionedDBProvider
+	VersionedDBProvider statedb.VersionedDBProvider
 	HealthCheckRegistry ledger.HealthCheckRegistry
-	bookkeepingProvider bookkeeping.Provider
+	bookkeepingProvider *bookkeeping.Provider
 }
 
 // NewDBProvider constructs an instance of DBProvider
 func NewDBProvider(
-	bookkeeperProvider bookkeeping.Provider,
+	bookkeeperProvider *bookkeeping.Provider,
 	metricsProvider metrics.Provider,
 	healthCheckRegistry ledger.HealthCheckRegistry,
 	stateDBConf *StateDBConfig,
@@ -64,7 +63,7 @@ func NewDBProvider(
 	var vdbProvider statedb.VersionedDBProvider
 	var err error
 
-	if stateDBConf != nil && stateDBConf.StateDatabase == couchDB {
+	if stateDBConf != nil && stateDBConf.StateDatabase == ledger.CouchDB {
 		if vdbProvider, err = statecouchdb.NewVersionedDBProvider(stateDBConf.CouchDB, metricsProvider, sysNamespaces); err != nil {
 			return nil, err
 		}
@@ -74,7 +73,11 @@ func NewDBProvider(
 		}
 	}
 
-	dbProvider := &DBProvider{vdbProvider, healthCheckRegistry, bookkeeperProvider}
+	dbProvider := &DBProvider{
+		VersionedDBProvider: vdbProvider,
+		HealthCheckRegistry: healthCheckRegistry,
+		bookkeepingProvider: bookkeeperProvider,
+	}
 
 	err = dbProvider.RegisterHealthChecker()
 	if err != nil {
@@ -95,19 +98,27 @@ func (p *DBProvider) RegisterHealthChecker() error {
 }
 
 // GetDBHandle gets a handle to DB for a given id, i.e., a channel
-func (p *DBProvider) GetDBHandle(id string) (*DB, error) {
-	vdb, err := p.VersionedDBProvider.GetDBHandle(id)
+func (p *DBProvider) GetDBHandle(id string, chInfoProvider channelInfoProvider) (*DB, error) {
+	vdb, err := p.VersionedDBProvider.GetDBHandle(id, &namespaceProvider{chInfoProvider})
 	if err != nil {
 		return nil, err
 	}
 	bookkeeper := p.bookkeepingProvider.GetDBHandle(id, bookkeeping.MetadataPresenceIndicator)
-	metadataHint := newMetadataHint(bookkeeper)
+	metadataHint, err := newMetadataHint(bookkeeper)
+	if err != nil {
+		return nil, err
+	}
 	return NewDB(vdb, id, metadataHint)
 }
 
 // Close closes all the VersionedDB instances and releases any resources held by VersionedDBProvider
 func (p *DBProvider) Close() {
 	p.VersionedDBProvider.Close()
+}
+
+// Drop drops channel-specific data from the statedb
+func (p *DBProvider) Drop(ledgerid string) error {
+	return p.VersionedDBProvider.Drop(ledgerid)
 }
 
 // DB uses a single database to maintain both the public and private data
@@ -188,7 +199,7 @@ func (s *DB) GetPrivateDataHash(namespace, collection, key string) (*statedb.Ver
 	return s.GetValueHash(namespace, collection, util.ComputeStringHash(key))
 }
 
-// GetPrivateDataHash gets the value hash of a private data item identified by a tuple <namespace, collection, keyHash>
+// GetValueHash gets the value hash of a private data item identified by a tuple <namespace, collection, keyHash>
 func (s *DB) GetValueHash(namespace, collection string, keyHash []byte) (*statedb.VersionedValue, error) {
 	keyHashStr := string(keyHash)
 	if !s.BytesKeySupported() {
@@ -231,7 +242,7 @@ func (s *DB) GetPrivateDataRangeScanIterator(namespace, collection, startKey, en
 	return s.GetStateRangeScanIterator(derivePvtDataNs(namespace, collection), startKey, endKey)
 }
 
-// ExecuteQuery executes the given query and returns an iterator that contains results of type specific to the underlying data store.
+// ExecuteQueryOnPrivateData executes the given query and returns an iterator that contains results of type specific to the underlying data store.
 func (s DB) ExecuteQueryOnPrivateData(namespace, collection, query string) (statedb.ResultsIterator, error) {
 	return s.ExecuteQuery(derivePvtDataNs(namespace, collection), query)
 }
@@ -248,7 +259,9 @@ func (s *DB) ApplyPrivacyAwareUpdates(updates *UpdateBatch, height *version.Heig
 	combinedUpdates := updates.PubUpdates
 	addPvtUpdates(combinedUpdates, updates.PvtUpdates)
 	addHashedUpdates(combinedUpdates, updates.HashUpdates, !s.BytesKeySupported())
-	s.metadataHint.setMetadataUsedFlag(updates)
+	if err := s.metadataHint.setMetadataUsedFlag(updates); err != nil {
+		return err
+	}
 	return s.VersionedDB.ApplyUpdates(combinedUpdates.UpdateBatch, height)
 }
 
@@ -302,13 +315,7 @@ func (s *DB) HandleChaincodeDeploy(chaincodeDefinition *cceventmgmt.ChaincodeDef
 		return nil
 	}
 
-	collectionConfigMap, err := extractCollectionNames(chaincodeDefinition)
-	if err != nil {
-		logger.Errorf("Error while retrieving collection config for chaincode=[%s]: %s",
-			chaincodeDefinition.Name, err)
-		return nil
-	}
-
+	collectionConfigMap := extractCollectionNames(chaincodeDefinition)
 	for directoryPath, indexFiles := range dbArtifacts {
 		indexFilesData := make(map[string][]byte)
 		for _, f := range indexFiles {
@@ -351,6 +358,22 @@ func deriveHashedDataNs(namespace, collection string) string {
 	return namespace + nsJoiner + hashDataPrefix + collection
 }
 
+func decodeHashedDataNsColl(hashedDataNs string) (string, string, error) {
+	strs := strings.Split(hashedDataNs, nsJoiner+hashDataPrefix)
+	if len(strs) != 2 {
+		return "", "", errors.Errorf("not a valid hashedDataNs [%s]", hashedDataNs)
+	}
+	return strs[0], strs[1], nil
+}
+
+func isPvtdataNs(namespace string) bool {
+	return strings.Contains(namespace, nsJoiner+pvtDataPrefix)
+}
+
+func isHashedDataNs(namespace string) bool {
+	return strings.Contains(namespace, nsJoiner+hashDataPrefix)
+}
+
 func addPvtUpdates(pubUpdateBatch *PubUpdateBatch, pvtUpdateBatch *PvtUpdateBatch) {
 	for ns, nsBatch := range pvtUpdateBatch.UpdateMap {
 		for _, coll := range nsBatch.GetCollectionNames() {
@@ -374,7 +397,7 @@ func addHashedUpdates(pubUpdateBatch *PubUpdateBatch, hashedUpdateBatch *HashedU
 	}
 }
 
-func extractCollectionNames(chaincodeDefinition *cceventmgmt.ChaincodeDefinition) (map[string]bool, error) {
+func extractCollectionNames(chaincodeDefinition *cceventmgmt.ChaincodeDefinition) map[string]bool {
 	collectionConfigs := chaincodeDefinition.CollectionConfigs
 	collectionConfigsMap := make(map[string]bool)
 	if collectionConfigs != nil {
@@ -386,7 +409,7 @@ func extractCollectionNames(chaincodeDefinition *cceventmgmt.ChaincodeDefinition
 			collectionConfigsMap[sConfig.Name] = true
 		}
 	}
-	return collectionConfigsMap, nil
+	return collectionConfigsMap
 }
 
 type indexInfo struct {
@@ -420,4 +443,42 @@ func getIndexInfo(indexPath string) *indexInfo {
 		indexInfo.collectionName = dirsDepth[collectionNameDepth]
 	}
 	return indexInfo
+}
+
+// channelInfoProvider interface enables the privateenabledstate package to retrieve all the config blocks
+// and  namespaces and collections.
+type channelInfoProvider interface {
+	// NamespacesAndCollections returns namespaces and collections for the channel.
+	NamespacesAndCollections(vdb statedb.VersionedDB) (map[string][]string, error)
+}
+
+// namespaceProvider implements statedb.NamespaceProvider interface
+type namespaceProvider struct {
+	channelInfoProvider
+}
+
+// PossibleNamespaces returns all possible namespaces for a channel. In ledger, a private data namespace is
+// created only if the peer is a member of the collection or owns the implicit collection. However, this function
+// adopts a simple implementation that always adds private data namespace for a collection without checking
+// peer membership/ownership. As a result, it returns a superset of namespaces that may be created.
+// However, it will not cause any inconsistent issue because the caller in statecouchdb will check if any
+// existing database matches the namespace and filter out all extra namespaces if no databases match them.
+// Checking peer membership is complicated because it requires retrieving all the collection configs from
+// the collection config store. Because this is a temporary function needed to retroactively build namespaces
+// when upgrading v2.0/2.1 peers to a newer v2.x version and because returning extra private data namespaces
+// does not cause inconsistence, it makes sense to use the simple implementation.
+func (p *namespaceProvider) PossibleNamespaces(vdb statedb.VersionedDB) ([]string, error) {
+	retNamespaces := []string{}
+	nsCollMap, err := p.NamespacesAndCollections(vdb)
+	if err != nil {
+		return nil, err
+	}
+	for ns, collections := range nsCollMap {
+		retNamespaces = append(retNamespaces, ns)
+		for _, collection := range collections {
+			retNamespaces = append(retNamespaces, deriveHashedDataNs(ns, collection))
+			retNamespaces = append(retNamespaces, derivePvtDataNs(ns, collection))
+		}
+	}
+	return retNamespaces, nil
 }
